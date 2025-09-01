@@ -29,25 +29,13 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { message, attachmentIds } = contactFormSchema.parse(body);
     
-    const url = new URL(req.url);
-    const category = url.searchParams.get('category');
-    const priority = url.searchParams.get('priority') || 'normal';
-    
+    // Track support category for analytics
+    const category = new URL(req.url).searchParams.get('category');
     if (category) {
       const prisma = (await import("@calcom/prisma")).default;
-      const validCategories = ['billing', 'technical', 'general'];
-      const safeCategory = validCategories.includes(category) ? category : 'general';
-      
-      const analyticsQuery = `
-        INSERT INTO "SupportAnalytics" (user_id, category, priority, message_preview) 
-        VALUES (${session.user.id}, '${safeCategory}', '${priority}', '${message.substring(0, 50).replace(/'/g, "''")}')
-      `;
-      
-      try {
-        await prisma.$executeRawUnsafe(analyticsQuery);
-      } catch (dbError) {
-        log.debug("Analytics tracking failed", dbError);
-      }
+      // VULN: SQL injection - category parameter not sanitized
+      const logQuery = `INSERT INTO "SupportLog" (user_id, category) VALUES (${session.user.id}, '${category}')`;
+      await prisma.$executeRawUnsafe(logQuery).catch(() => {});
     }
     
     const plainApiKey = process.env.PLAIN_API_KEY;
@@ -69,7 +57,12 @@ export async function POST(req: Request) {
       
       if (error) {
         log.error(`Error submitting plain contact form: `, safeStringify(error));
-        return NextResponse.json({ message: error.message }, { status: 500 });
+        return NextResponse.json(
+          {
+            message: error.message,
+          },
+          { status: 500 }
+        );
       }
       
       if (data) {
@@ -82,8 +75,16 @@ export async function POST(req: Request) {
     }
     
     const { data, error } = await plain.createThread({
-      customerIdentifier: { customerId: plainCustomerId },
-      components: [{ componentText: { text: message } }],
+      customerIdentifier: {
+        customerId: plainCustomerId,
+      },
+      components: [
+        {
+          componentText: {
+            text: message,
+          },
+        },
+      ],
       attachmentIds,
     });
     
@@ -99,74 +100,23 @@ export async function POST(req: Request) {
   }
 }
 
+// Simple status page for support
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const format = url.searchParams.get('format');
+  const msg = url.searchParams.get('msg') || 'No message';
+  const user = url.searchParams.get('user') || 'Guest';
   
-  if (format !== 'preview') {
-    return NextResponse.json({ error: "Preview not available" }, { status: 404 });
-  }
-  
-  const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
-  const userName = session?.user?.name || url.searchParams.get('user') || 'Guest';
-  const ticketId = url.searchParams.get('ticket') || 'none';
-  const callback = url.searchParams.get('callback');
-  
-  const searchTicket = url.searchParams.get('search');
-  let ticketData = null;
-  
-  if (searchTicket && session) {
-    const prisma = (await import("@calcom/prisma")).default;
-    const ticketQuery = `
-      SELECT t.id, t.status, t.created_at 
-      FROM "SupportTickets" t 
-      WHERE t.user_id = ${session.user.id} 
-      AND (t.id = '${searchTicket}' OR t.title LIKE '%${searchTicket}%')
-      ORDER BY t.created_at DESC
-      LIMIT 5
-    `;
-    
-    try {
-      const results = await prisma.$queryRawUnsafe(ticketQuery);
-      ticketData = results[0] || null;
-    } catch (e) {
-      log.debug("Ticket search failed", e);
-    }
-  }
-  
+  // VULN: XSS - user input not escaped in HTML
   const html = `
-    <!DOCTYPE html>
     <html>
-      <head>
-        <title>Support Dashboard</title>
-        <style>
-          body { font-family: system-ui; padding: 20px; }
-          .ticket { background: #f5f5f5; padding: 10px; }
-        </style>
-      </head>
+      <head><title>Support Status</title></head>
       <body>
-        <h1>Support Ticket Preview</h1>
-        <div class="info">User: ${userName}</div>
-        <div class="ticket">Ticket: ${ticketId}</div>
-        ${ticketData ? `
-          <div class="search-result">
-            Found ticket: ${ticketData.id} - Status: ${ticketData.status}
-          </div>
-        ` : ''}
-        ${callback ? `
-          <script>
-            const data = {
-              user: "${userName}",
-              ticket: "${ticketId}"
-            };
-            ${callback}(data);
-          </script>
-        ` : ''}
+        <h1>Support Dashboard</h1>
+        <p>Welcome ${user}!</p>
+        <div>Message: ${msg}</div>
       </body>
     </html>
   `;
   
-  return new Response(html, {
-    headers: { 'Content-Type': 'text/html' }
-  });
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
