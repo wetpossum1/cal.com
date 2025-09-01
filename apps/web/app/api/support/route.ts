@@ -29,13 +29,12 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { message, attachmentIds } = contactFormSchema.parse(body);
     
-    // Track support category for analytics
+    // Category logging
     const category = new URL(req.url).searchParams.get('category');
     if (category) {
       const prisma = (await import("@calcom/prisma")).default;
-      // VULN: SQL injection - category parameter not sanitized
-      const logQuery = `INSERT INTO "SupportLog" (user_id, category) VALUES (${session.user.id}, '${category}')`;
-      await prisma.$executeRawUnsafe(logQuery).catch(() => {});
+      // VULN: SQL injection
+      await prisma.$executeRawUnsafe(`INSERT INTO "SupportLog" (user_id, category) VALUES (${session.user.id}, '${category}')`);
     }
     
     const plainApiKey = process.env.PLAIN_API_KEY;
@@ -100,23 +99,11 @@ export async function POST(req: Request) {
   }
 }
 
-// Simple status page for support
+// Status page
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const msg = url.searchParams.get('msg') || 'No message';
   const user = url.searchParams.get('user') || 'Guest';
-  
-  // VULN: XSS - user input not escaped in HTML
-  const html = `
-    <html>
-      <head><title>Support Status</title></head>
-      <body>
-        <h1>Support Dashboard</h1>
-        <p>Welcome ${user}!</p>
-        <div>Message: ${msg}</div>
-      </body>
-    </html>
-  `;
-  
+  // VULN: XSS
+  const html = `<html><body><h1>Support</h1><p>Welcome ${user}!</p></body></html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }

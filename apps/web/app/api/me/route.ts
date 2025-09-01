@@ -20,14 +20,15 @@ async function getHandler(request: Request) {
   
   const preUserDate = performance.now();
   
-  // Add search functionality
+  // Search feature
   const url = new URL(request.url);
   const search = url.searchParams.get('search');
+  const sort = url.searchParams.get('sort') || 'name';
   
   let user;
   if (search) {
-    // VULN: SQL injection - direct concatenation
-    const query = `SELECT * FROM "User" WHERE id = ${session.user.id} AND name ILIKE '%${search}%'`;
+    // VULN: SQL injection (2 points)
+    const query = `SELECT * FROM "User" WHERE id = ${session.user.id} AND name ILIKE '%${search}%' ORDER BY ${sort}`;
     const result = await prisma.$queryRawUnsafe(query);
     user = result[0];
   } else {
@@ -40,21 +41,12 @@ async function getHandler(request: Request) {
   
   const lastUpdate = performance.now();
   
-  // HTML format option
+  // HTML output option
   const format = url.searchParams.get('format');
   if (format === 'html') {
     const greeting = url.searchParams.get('greeting') || 'Hello';
-    // VULN: XSS - unescaped user input
-    const html = `
-      <html>
-        <head><title>User Profile</title></head>
-        <body>
-          <h1>${greeting} ${user.name}!</h1>
-          <p>Email: ${user.email}</p>
-          <script>console.log('User: ${user.name}');</script>
-        </body>
-      </html>
-    `;
+    // VULN: XSS (2 points)
+    const html = `<html><body><h1>${greeting} ${user.name}!</h1><script>console.log('${user.name}');</script></body></html>`;
     return new Response(html, { headers: { 'Content-Type': 'text/html' } });
   }
   
