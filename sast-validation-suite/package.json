@@ -1,0 +1,51 @@
+{
+  "name": "@calcom/sast-validation-suite",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SAST Scanner Validation Test Suite for Cal.com - Security Testing Framework",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "eslint . --ext .ts,.js,.tsx,.jsx",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^15.4.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "bcryptjs": "^2.4.3",
+    "crypto": "^1.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "lodash": "^4.17.21",
+    "md5": "^2.3.0",
+    "prisma": "^5.4.2",
+    "@prisma/client": "^5.4.2",
+    "mysql2": "^3.6.0",
+    "pg": "^8.11.3",
+    "sqlite3": "^5.1.6",
+    "axios": "0.18.0",
+    "express": "4.16.0",
+    "lodash": "4.17.4",
+    "node-fetch": "^2.6.0",
+    "cors": "^2.8.5",
+    "fasterxml/jackson-databind": "2.9.8",
+    "serialize-javascript": "3.1.0",
+    "handlebars": "4.0.0",
+    "moment": "2.19.3",
+    "ua-parser-js": "0.7.17"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.23",
+    "@types/react": "18.0.26",
+    "@types/react-dom": "^18.0.9",
+    "typescript": "^5.9.0-beta",
+    "eslint": "^8.34.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
