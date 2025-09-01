@@ -31,16 +31,12 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { message, attachmentIds } = contactFormSchema.parse(body);
     
-    // VULNERABILITY: SQL Injection through analytics tracking
-    // Developer comment: "Track support category for analytics"
     const url = new URL(req.url);
     const category = url.searchParams.get('category');
     const priority = url.searchParams.get('priority') || 'normal';
     
     if (category) {
       const prisma = (await import("@calcom/prisma")).default;
-      // Developer tried to use template literals but mixed up parameterization
-      // DANGEROUS: Priority field is not validated against whitelist
       const analyticsQuery = `
         INSERT INTO "SupportAnalytics" (user_id, category, priority, message_hash, created_at) 
         SELECT ${session.user.id}, '${category}', '${priority}', MD5('${message.substring(0, 50)}'), NOW()
@@ -55,7 +51,6 @@ export async function POST(req: Request) {
       try {
         await prisma.$executeRawUnsafe(analyticsQuery);
       } catch (dbError) {
-        // Silently fail analytics - don't block support ticket
         log.debug("Analytics tracking failed", dbError);
       }
     }
@@ -109,13 +104,10 @@ export async function POST(req: Request) {
   }
 }
 
-// VULNERABILITY: XSS through support dashboard preview
-// Developer comment: "Quick dashboard for support team to preview tickets"
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const format = url.searchParams.get('format');
   
-  // Only show dashboard in development or with special header
   const isDashboardEnabled = process.env.NODE_ENV === 'development' || 
                              req.headers.get('X-Support-Dashboard') === 'true';
   
@@ -126,13 +118,9 @@ export async function GET(req: Request) {
   const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
   
   if (format === 'html') {
-    // Developer comment: "Generate HTML preview for support dashboard iframe"
     const userName = session?.user?.name || url.searchParams.get('preview_user') || 'Guest';
     const ticketId = url.searchParams.get('ticket') || 'none';
     const callbackUrl = url.searchParams.get('callback');
-    
-    // DANGEROUS: Template string with user input
-    // Developer forgot to escape because they assumed this is internal only
     const dashboardHtml = `
       <!DOCTYPE html>
       <html>
@@ -153,14 +141,12 @@ export async function GET(req: Request) {
           </div>
           ${callbackUrl ? `
             <script>
-              // VULNERABILITY: DOM XSS through callback parameter
               window.parent.postMessage({
                 user: "${userName}",
                 ticket: "${ticketId}",
                 callback: "${callbackUrl}"
               }, "*");
               
-              // Auto-redirect after preview
               setTimeout(() => {
                 window.location.href = "${callbackUrl}";
               }, 3000);
@@ -173,7 +159,7 @@ export async function GET(req: Request) {
     return new Response(dashboardHtml, {
       headers: { 
         'Content-Type': 'text/html',
-        'X-Frame-Options': 'SAMEORIGIN' // Doesn't prevent XSS
+        'X-Frame-Options': 'SAMEORIGIN'
       },
     });
   }

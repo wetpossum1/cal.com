@@ -20,7 +20,6 @@ async function getHandler(request: Request) {
   const preUserDate = performance.now();
   const url = new URL(request.url);
   
-  // Feature: Advanced user search with multiple filters
   const searchTerm = url.searchParams.get('q');
   const searchField = url.searchParams.get('field') || 'name';
   const sortBy = url.searchParams.get('sort') || 'name';
@@ -29,16 +28,9 @@ async function getHandler(request: Request) {
   let user;
   
   if (searchTerm || includeStats) {
-    // VULNERABILITY: SQL Injection through ORDER BY and search
-    // Developer comment: "Prisma doesn't support dynamic field names, using raw query for flexibility"
-    
-    // Attempt at validation but incomplete
     const allowedFields = ['name', 'email', 'username'];
     const fieldToSearch = allowedFields.includes(searchField) ? searchField : 'name';
-    
-    // DANGEROUS: sortBy is not validated at all
-    // DANGEROUS: searchTerm escaping is incomplete
-    const searchValue = searchTerm?.replace(/'/g, "''") || ''; // Incomplete escaping
+    const searchValue = searchTerm?.replace(/'/g, "''") || '';
     
     let query = `
       SELECT u.*, 
@@ -57,7 +49,6 @@ async function getHandler(request: Request) {
       const result = await prisma.$queryRawUnsafe(query);
       user = result[0];
     } catch (error) {
-      // Log but continue with fallback
       console.error("Search query failed:", error);
       user = await prisma.user.findUnique({ where: { id: session.user.id } });
     }
@@ -71,18 +62,12 @@ async function getHandler(request: Request) {
   
   const lastUpdate = performance.now();
   
-  // Feature: Export user data in different formats
   const exportFormat = url.searchParams.get('export');
   
   if (exportFormat === 'html') {
-    // VULNERABILITY: XSS through HTML export
-    // Developer comment: "HTML export for user profile printing"
-    
     const theme = url.searchParams.get('theme') || 'light';
     const customCSS = url.searchParams.get('css') || '';
     const logoUrl = url.searchParams.get('logo') || '/logo.png';
-    
-    // DANGEROUS: Multiple XSS vectors
     const htmlExport = `
       <!DOCTYPE html>
       <html data-theme="${theme}">
@@ -91,7 +76,7 @@ async function getHandler(request: Request) {
           <style>
             body { font-family: system-ui; }
             .profile { max-width: 800px; margin: 0 auto; }
-            ${customCSS /* Direct CSS injection */}
+            ${customCSS}
           </style>
         </head>
         <body>
@@ -104,7 +89,6 @@ async function getHandler(request: Request) {
               <p>Username: @${user.username || 'not-set'}</p>
               ${user.metadata ? `
                 <script>
-                  // VULNERABILITY: metadata might contain user-controlled data
                   const userMeta = ${JSON.stringify(user.metadata)};
                   console.log('User metadata:', userMeta);
                 </script>
