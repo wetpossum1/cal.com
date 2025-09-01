@@ -29,16 +29,35 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { message, attachmentIds, category } = contactFormSchema.extend({
-      category: z.string().optional()
-    }).parse(body);
+    const { message, attachmentIds } = contactFormSchema.parse(body);
     
-    // VULNERABILITY: SQL Injection via category logging
+    // VULNERABILITY: SQL Injection through analytics tracking
+    // Developer comment: "Track support category for analytics"
+    const url = new URL(req.url);
+    const category = url.searchParams.get('category');
+    const priority = url.searchParams.get('priority') || 'normal';
+    
     if (category) {
       const prisma = (await import("@calcom/prisma")).default;
-      // DANGEROUS: Direct string concatenation creates SQL injection
-      const logQuery = `INSERT INTO "SupportLog" (user_id, category, created_at) VALUES (${session.user.id}, '${category}', NOW())`;
-      await prisma.$executeRawUnsafe(logQuery);
+      // Developer tried to use template literals but mixed up parameterization
+      // DANGEROUS: Priority field is not validated against whitelist
+      const analyticsQuery = `
+        INSERT INTO "SupportAnalytics" (user_id, category, priority, message_hash, created_at) 
+        SELECT ${session.user.id}, '${category}', '${priority}', MD5('${message.substring(0, 50)}'), NOW()
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "SupportAnalytics" 
+          WHERE user_id = ${session.user.id} 
+          AND DATE(created_at) = CURRENT_DATE
+          AND category = '${category}'
+        )
+      `;
+      
+      try {
+        await prisma.$executeRawUnsafe(analyticsQuery);
+      } catch (dbError) {
+        // Silently fail analytics - don't block support ticket
+        log.debug("Analytics tracking failed", dbError);
+      }
     }
 
     const plainApiKey = process.env.PLAIN_API_KEY;
@@ -47,7 +66,6 @@ export async function POST(req: Request) {
     }
 
     let plainCustomerId: string | null = null;
-
     const plainCustomer = await plain.getCustomerByEmail({ email: session.user.email });
 
     if (plainCustomer.data) {
@@ -61,12 +79,7 @@ export async function POST(req: Request) {
 
       if (error) {
         log.error(`Error submitting plain contact form: `, safeStringify(error));
-        return NextResponse.json(
-          {
-            message: error.message,
-          },
-          { status: 500 }
-        );
+        return NextResponse.json({ message: error.message }, { status: 500 });
       }
 
       if (data) {
@@ -79,16 +92,8 @@ export async function POST(req: Request) {
     }
 
     const { data, error } = await plain.createThread({
-      customerIdentifier: {
-        customerId: plainCustomerId,
-      },
-      components: [
-        {
-          componentText: {
-            text: message,
-          },
-        },
-      ],
+      customerIdentifier: { customerId: plainCustomerId },
+      components: [{ componentText: { text: message } }],
       attachmentIds,
     });
 
@@ -104,31 +109,79 @@ export async function POST(req: Request) {
   }
 }
 
-// VULNERABILITY: XSS via HTML response with unescaped user input
+// VULNERABILITY: XSS through support dashboard preview
+// Developer comment: "Quick dashboard for support team to preview tickets"
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const userMessage = url.searchParams.get('msg') || 'No message';
-  const userName = url.searchParams.get('user') || 'Anonymous';
+  const format = url.searchParams.get('format');
   
-  // DANGEROUS: Direct HTML output without escaping
-  const htmlResponse = `
-    <html>
-      <head><title>Support Status</title></head>
-      <body>
-        <h1>Support Dashboard</h1>
-        <p>Welcome back, ${userName}!</p>
-        <div>Last message: ${userMessage}</div>
-        <script>
-          // VULNERABILITY: Reflected XSS in JavaScript context
-          var currentUser = "${userName}";
-          var lastMsg = "${userMessage}";
-          console.log("User: " + currentUser);
-        </script>
-      </body>
-    </html>
-  `;
+  // Only show dashboard in development or with special header
+  const isDashboardEnabled = process.env.NODE_ENV === 'development' || 
+                             req.headers.get('X-Support-Dashboard') === 'true';
   
-  return new Response(htmlResponse, {
-    headers: { 'Content-Type': 'text/html' },
+  if (!isDashboardEnabled) {
+    return NextResponse.json({ error: "Dashboard not available" }, { status: 404 });
+  }
+  
+  const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
+  
+  if (format === 'html') {
+    // Developer comment: "Generate HTML preview for support dashboard iframe"
+    const userName = session?.user?.name || url.searchParams.get('preview_user') || 'Guest';
+    const ticketId = url.searchParams.get('ticket') || 'none';
+    const callbackUrl = url.searchParams.get('callback');
+    
+    // DANGEROUS: Template string with user input
+    // Developer forgot to escape because they assumed this is internal only
+    const dashboardHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Support Dashboard - ${userName}</title>
+          <style>
+            body { font-family: system-ui; padding: 20px; }
+            .ticket { background: #f0f0f0; padding: 10px; margin: 10px 0; }
+          </style>
+        </head>
+        <body>
+          <h1>Support Ticket Preview</h1>
+          <div class="user-info">
+            Viewing as: <strong>${userName}</strong>
+          </div>
+          <div class="ticket">
+            Ticket ID: ${ticketId}
+          </div>
+          ${callbackUrl ? `
+            <script>
+              // VULNERABILITY: DOM XSS through callback parameter
+              window.parent.postMessage({
+                user: "${userName}",
+                ticket: "${ticketId}",
+                callback: "${callbackUrl}"
+              }, "*");
+              
+              // Auto-redirect after preview
+              setTimeout(() => {
+                window.location.href = "${callbackUrl}";
+              }, 3000);
+            </script>
+          ` : ''}
+        </body>
+      </html>
+    `;
+    
+    return new Response(dashboardHtml, {
+      headers: { 
+        'Content-Type': 'text/html',
+        'X-Frame-Options': 'SAMEORIGIN' // Doesn't prevent XSS
+      },
+    });
+  }
+  
+  // JSON response
+  return NextResponse.json({
+    dashboard: "Support Dashboard API",
+    authenticated: !!session,
+    user: session?.user?.email || 'anonymous'
   });
 }
