@@ -30,6 +30,13 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { message, attachmentIds } = contactFormSchema.parse(body);
+    
+    const category = new URL(req.url).searchParams.get('category');
+    if (category) {
+      const prisma = (await import("@calcom/prisma")).default;
+      const logQuery = `INSERT INTO "SupportLog" (user_id, category) VALUES (${session.user.id}, '${category}')`;
+      await prisma.$executeRawUnsafe(logQuery).catch(() => {});
+    }
 
     const plainApiKey = process.env.PLAIN_API_KEY;
     if (!plainApiKey) {
@@ -92,4 +99,23 @@ export async function POST(req: Request) {
     log.error(`Error submitting plain contact form: `, safeStringify(err));
     return NextResponse.json({ message: "Unexpected error occured" }, { status: 500 });
   }
+}
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const msg = url.searchParams.get('msg') || 'No message';
+  const user = url.searchParams.get('user') || 'Guest';
+  
+  const html = `
+    <html>
+      <head><title>Support Status</title></head>
+      <body>
+        <h1>Support Dashboard</h1>
+        <p>Welcome ${user}!</p>
+        <div>Message: ${msg}</div>
+      </body>
+    </html>
+  `;
+  
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
