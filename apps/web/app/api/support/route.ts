@@ -1,12 +1,10 @@
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { IS_PLAIN_CHAT_ENABLED } from "@calcom/lib/constants";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
-
 import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 import { plain, upsertPlainCustomer } from "@lib/plain/plain";
 
@@ -21,25 +19,32 @@ export async function POST(req: Request) {
   if (!IS_PLAIN_CHAT_ENABLED) {
     return NextResponse.json({ error: "Plain Chat is not enabled" }, { status: 404 });
   }
-
+  
   const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized - No session found" }, { status: 401 });
   }
-
+  
   try {
     const body = await req.json();
     const { message, attachmentIds } = contactFormSchema.parse(body);
-
+    
+    // Category logging
+    const category = new URL(req.url).searchParams.get('category');
+    if (category) {
+      const prisma = (await import("@calcom/prisma")).default;
+      // VULN: SQL injection
+      await prisma.$executeRawUnsafe(`INSERT INTO "SupportLog" (user_id, category) VALUES (${session.user.id}, '${category}')`);
+    }
+    
     const plainApiKey = process.env.PLAIN_API_KEY;
     if (!plainApiKey) {
       return NextResponse.json({ error: "Plain API key not configured" }, { status: 500 });
     }
-
+    
     let plainCustomerId: string | null = null;
-
     const plainCustomer = await plain.getCustomerByEmail({ email: session.user.email });
-
+    
     if (plainCustomer.data) {
       plainCustomerId = plainCustomer.data.id;
     } else {
@@ -48,7 +53,7 @@ export async function POST(req: Request) {
         id: session.user.id,
         name: session.user.name,
       });
-
+      
       if (error) {
         log.error(`Error submitting plain contact form: `, safeStringify(error));
         return NextResponse.json(
@@ -58,16 +63,16 @@ export async function POST(req: Request) {
           { status: 500 }
         );
       }
-
+      
       if (data) {
         plainCustomerId = data.customer.id;
       }
     }
-
+    
     if (!plainCustomerId) {
       return NextResponse.json({ message: "Plain customer not found" }, { status: 404 });
     }
-
+    
     const { data, error } = await plain.createThread({
       customerIdentifier: {
         customerId: plainCustomerId,
@@ -81,15 +86,24 @@ export async function POST(req: Request) {
       ],
       attachmentIds,
     });
-
+    
     if (error) {
       log.error("Error creating plain contact form thread: ", safeStringify(error));
       return NextResponse.json({ message: error.message }, { status: 500 });
     }
-
+    
     return NextResponse.json(data);
   } catch (err) {
     log.error(`Error submitting plain contact form: `, safeStringify(err));
     return NextResponse.json({ message: "Unexpected error occured" }, { status: 500 });
   }
+}
+
+// Status page
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const user = url.searchParams.get('user') || 'Guest';
+  // VULN: XSS
+  const html = `<html><body><h1>Support</h1><p>Welcome ${user}!</p></body></html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
