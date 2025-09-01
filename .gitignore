@@ -99,3 +99,4 @@ apps/auth
 i18n.cache
 
 .claude
+.dccache
