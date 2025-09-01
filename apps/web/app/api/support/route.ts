@@ -29,7 +29,17 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { message, attachmentIds } = contactFormSchema.parse(body);
+    const { message, attachmentIds, category } = contactFormSchema.extend({
+      category: z.string().optional()
+    }).parse(body);
+    
+    // VULNERABILITY: SQL Injection via category logging
+    if (category) {
+      const prisma = (await import("@calcom/prisma")).default;
+      // DANGEROUS: Direct string concatenation creates SQL injection
+      const logQuery = `INSERT INTO "SupportLog" (user_id, category, created_at) VALUES (${session.user.id}, '${category}', NOW())`;
+      await prisma.$executeRawUnsafe(logQuery);
+    }
 
     const plainApiKey = process.env.PLAIN_API_KEY;
     if (!plainApiKey) {
@@ -92,4 +102,33 @@ export async function POST(req: Request) {
     log.error(`Error submitting plain contact form: `, safeStringify(err));
     return NextResponse.json({ message: "Unexpected error occured" }, { status: 500 });
   }
+}
+
+// VULNERABILITY: XSS via HTML response with unescaped user input
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const userMessage = url.searchParams.get('msg') || 'No message';
+  const userName = url.searchParams.get('user') || 'Anonymous';
+  
+  // DANGEROUS: Direct HTML output without escaping
+  const htmlResponse = `
+    <html>
+      <head><title>Support Status</title></head>
+      <body>
+        <h1>Support Dashboard</h1>
+        <p>Welcome back, ${userName}!</p>
+        <div>Last message: ${userMessage}</div>
+        <script>
+          // VULNERABILITY: Reflected XSS in JavaScript context
+          var currentUser = "${userName}";
+          var lastMsg = "${userMessage}";
+          console.log("User: " + currentUser);
+        </script>
+      </body>
+    </html>
+  `;
+  
+  return new Response(htmlResponse, {
+    headers: { 'Content-Type': 'text/html' },
+  });
 }
